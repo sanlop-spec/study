@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Study Scheduler | Planificador de Estudio Inteligente</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+              800: '#075985',
+              900: '#0c4a6e',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  
+  <!-- Google Fonts (Inter) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- React & Babel CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #1e293b;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-sky-500 selection:text-white">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // --- INITIAL MOCK DATA ---
+    const DEFAULT_SUBJECTS = [
+      { id: 'sub-1', name: 'Cálculo Multivariable', color: '#3b82f6', difficulty: 5 },
+      { id: 'sub-2', name: 'Física Cuántica Basics', color: '#a855f7', difficulty: 4 },
+      { id: 'sub-3', name: 'Estructuras de Datos', color: '#10b981', difficulty: 3 },
+      { id: 'sub-4', name: 'Inglés Técnico', color: '#f59e0b', difficulty: 1 },
+    ];
+
+    const DEFAULT_ASSESSMENTS = [
+      {
+        id: 'ass-1',
+        subjectId: 'sub-1',
+        title: 'Examen Parcial de Integrales Triples',
+        dueDate: new Date(Date.now() + 4 * 86400000).toISOString().split('T')[0], // En 4 días
+        weight: 35,
+        estimatedHours: 8,
+        isCompleted: false
+      },
+      {
+        id: 'ass-2',
+        subjectId: 'sub-3',
+        title: 'Proyecto Árboles B+ en C++',
+        dueDate: new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0], // En 2 días
+        weight: 25,
+        estimatedHours: 6,
+        isCompleted: false
+      },
+      {
+        id: 'ass-3',
+        subjectId: 'sub-2',
+        title: 'Cuestionario de Efecto Fotoeléctrico',
+        dueDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0], // En 7 días
+        weight: 15,
+        estimatedHours: 3,
+        isCompleted: false
+      }
+    ];
+
+    // --- ALGORITHM CORE ---
+    function calculatePriorityScore(assessment, subject) {
+      if (assessment.isCompleted) return 0;
+      
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const due = new Date(assessment.dueDate);
+      due.setHours(0, 0, 0, 0);
+      
+      const diffTime = due.getTime() - today.getTime();
+      const daysLeft = Math.max(0.5, Math.ceil(diffTime / (1000 * 3600 * 24)));
+      
+      const difficultyFactor = subject ? subject.difficulty : 3; // 1-5
+      const weightFactor = assessment.weight / 100; // 0.05 - 0.50
+      
+      // Fórmula de Priorización Inteligente
+      // Score = (Peso * Dificultad * 100) / (Días Restantes ^ 1.2)
+      const score = (weightFactor * difficultyFactor * 100) / Math.pow(daysLeft, 1.2);
+      return parseFloat(score.toFixed(2));
+    }
+
+    function getPriorityLevel(score) {
+      if (score >= 25) return { label: 'URGENTE', color: 'bg-red-500/20 text-red-400 border-red-500/30' };
+      if (score >= 12) return { label: 'ALTA', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' };
+      if (score >= 5)  return { label: 'MEDIA', color: 'bg-sky-500/20 text-sky-400 border-sky-500/30' };
+      return { label: 'BAJA', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' };
+    }
+
+    // --- MAIN APP COMPONENT ---
+    function App() {
+      // LocalStorage initialization
+      const [subjects, setSubjects] = useState(() => {
+        const saved = localStorage.getItem('sss_subjects');
+        return saved ? JSON.parse(saved) : DEFAULT_SUBJECTS;
+      });
+
+      const [assessments, setAssessments] = useState(() => {
+        const saved = localStorage.getItem('sss_assessments');
+        return saved ? JSON.parse(saved) : DEFAULT_ASSESSMENTS;
+      });
+
+      const [studyBlocks, setStudyBlocks] = useState(() => {
+        const saved = localStorage.getItem('sss_blocks');
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      const [activeTab, setActiveTab] = useState('dashboard');
+      const [quickText, setQuickText] = useState('');
+      const [parsedNotification, setParsedNotification] = useState(null);
+
+      // Form States
+      const [newSubject, setNewSubject] = useState({ name: '', color: '#3b82f6', difficulty: 3 });
+      const [newAssessment, setNewAssessment] = useState({
+        subjectId: '',
+        title: '',
+        dueDate: '',
+        weight: 20,
+        estimatedHours: 4
+      });
+
+      // Save to LocalStorage
+      useEffect(() => {
+        localStorage.setItem('sss_subjects', JSON.stringify(subjects));
+      }, [subjects]);
+
+      useEffect(() => {
+        localStorage.setItem('sss_assessments', JSON.stringify(assessments));
+      }, [assessments]);
+
+      useEffect(() => {
+        localStorage.setItem('sss_blocks', JSON.stringify(studyBlocks));
+      }, [studyBlocks]);
+
+      // Set default subject ID for assessment form if empty
+      useEffect(() => {
+        if (subjects.length > 0 && !newAssessment.subjectId) {
+          setNewAssessment(prev => ({ ...prev, subjectId: subjects[0].id }));
+        }
+      }, [subjects]);
+
+      // Calculated Assessment priorities
+      const sortedAssessments = useMemo(() => {
+        return [...assessments].map(ass => {
+          const sub = subjects.find(s => s.id === ass.subjectId);
+          const score = calculatePriorityScore(ass, sub);
+          return { ...ass, priorityScore: score, subject: sub };
+        }).sort((a, b) => b.priorityScore - a.priorityScore);
+      }, [assessments, subjects]);
+
+      // Auto-generate Study Schedule
+      const handleGenerateSchedule = () => {
+        const newBlocks = [];
+        const todayStr = new Date().toISOString().split('T')[0];
+
+        sortedAssessments.filter(a => !a.isCompleted).forEach(ass => {
+          const sessionsNeeded = Math.ceil((ass.estimatedHours * 60) / 45); // Sesiones de 45 min
+          const daysLeft = Math.max(1, Math.ceil((new Date(ass.dueDate) - new Date()) / (1000 * 3600 * 24)));
+          
+          for (let i = 0; i < Math.min(sessionsNeeded, 6); i++) {
+            const targetDate = new Date();
+            targetDate.setDate(targetDate.getDate() + (i % daysLeft));
+            const dateStr = targetDate.toISOString().split('T')[0];
+
+            newBlocks.push({
+              id: `block-${ass.id}-${i}-${Date.now()}`,
+              assessmentId: ass.id,
+              subjectId: ass.subjectId,
+              title: `Sesión ${i + 1}: ${ass.title}`,
+              date: dateStr,
+              durationMinutes: 45,
+              priorityScore: ass.priorityScore,
+              isCompleted: false
+            });
+          }
+        });
+
+        setStudyBlocks(newBlocks);
+        setActiveTab('dashboard');
+        setParsedNotification('📅 ¡Plan de estudio generado automáticamente según urgencia!');
+        setTimeout(() => setParsedNotification(null), 4000);
+      };
+
+      // Smart Text Input Parser
+      const parseSmartText = (e) => {
+        e.preventDefault();
+        if (!quickText.trim()) return;
+
+        const text = quickText.toLowerCase();
+        let matchedSubject = subjects.find(s => text.includes(s.name.toLowerCase()));
+        
+        if (!matchedSubject && subjects.length > 0) {
+          matchedSubject = subjects[0];
+        }
+
+        // Extract dates like "2026-08-15" or keywords "mañana", "hoy"
+        let dueDate = new Date().toISOString().split('T')[0];
+        if (text.includes('mañana')) {
+          const tom = new Date();
+          tom.setDate(tom.getDate() + 1);
+          dueDate = tom.toISOString().split('T')[0];
+        } else {
+          const dateMatch = text.match(/\d{4}-\d{2}-\d{2}/);
+          if (dateMatch) dueDate = dateMatch[0];
+        }
+
+        // Extract weight like "peso 30" or "30%"
+        const weightMatch = text.match(/(\d+)\s*%/ ) || text.match(/peso\s*(\d+)/);
+        const weight = weightMatch ? parseInt(weightMatch[1]) : 20;
+
+        const createdAssessment = {
+          id: `ass-${Date.now()}`,
+          subjectId: matchedSubject ? matchedSubject.id : subjects[0]?.id || 'sub-1',
+          title: quickText,
+          dueDate,
+          weight,
+          estimatedHours: 4,
+          isCompleted: false
+        };
+
+        setAssessments(prev => [...prev, createdAssessment]);
+        setQuickText('');
+        setParsedNotification(`✨ Creado automáticamente: "${quickText}" para ${dueDate}`);
+        setTimeout(() => setParsedNotification(null), 4000);
+      };
+
+      // Handlers
+      const toggleAssessment = (id) => {
+        setAssessments(prev => prev.map(a => a.id === id ? { ...a, isCompleted: !a.isCompleted } : a));
+      };
+
+      const toggleBlock = (id) => {
+        setStudyBlocks(prev => prev.map(b => b.id === id ? { ...b, isCompleted: !b.isCompleted } : b));
+      };
+
+      const handleAddSubject = (e) => {
+        e.preventDefault();
+        if (!newSubject.name.trim()) return;
+        const created = { ...newSubject, id: `sub-${Date.now()}` };
+        setSubjects(prev => [...prev, created]);
+        setNewSubject({ name: '', color: '#3b82f6', difficulty: 3 });
+      };
+
+      const handleAddAssessment = (e) => {
+        e.preventDefault();
+        if (!newAssessment.title.trim()) return;
+        const created = { ...newAssessment, id: `ass-${Date.now()}`, isCompleted: false };
+        setAssessments(prev => [...prev, created]);
+        setNewAssessment({ subjectId: subjects[0]?.id || '', title: '', dueDate: '', weight: 20, estimatedHours: 4 });
+      };
+
+      return (
+        <div class="min-h-screen flex flex-col">
+          {/* HEADER / NAVIGATION */}
+          <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 backdrop-blur bg-opacity-90">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-4">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-sky-500/20 font-bold text-xl">
+                  <i class="fa-solid fa-brain"></i>
+                </div>
+                <div>
+                  <h1 class="text-lg font-bold bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
+                    Smart Study Scheduler
+                  </h1>
+                  <p class="text-xs text-sky-400 font-mono">v1.0 • Offline Ready (PWA)</p>
+                </div>
+              </div>
+
+              {/* NAV TABS */}
+              <nav class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                <button
+                  onClick={() => setActiveTab('dashboard')}
+                  class={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-2 ${
+                    activeTab === 'dashboard' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <i class="fa-solid fa-chart-pie"></i> Dashboard
+                </button>
+                <button
+                  onClick={() => setActiveTab('assessments')}
+                  class={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-2 ${
+                    activeTab === 'assessments' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <i class="fa-solid fa-list-check"></i> Exámenes ({assessments.filter(a => !a.isCompleted).length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('subjects')}
+                  class={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-2 ${
+                    activeTab === 'subjects' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <i class="fa-solid fa-book-open"></i> Materias ({subjects.length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('github')}
+                  class={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-2 ${
+                    activeTab === 'github' ? 'bg-emerald-600 text-white shadow' : 'text-emerald-400 hover:text-emerald-300'
+                  }`}
+                >
+                  <i class="fa-brands fa-github"></i> Portfolio Kit
+                </button>
+              </nav>
+            </div>
+          </header>
+
+          {/* NOTIFICATION BANNER */}
+          {parsedNotification && (
+            <div class="bg-sky-500/10 border-b border-sky-500/20 text-sky-300 px-4 py-2 text-xs font-medium text-center animate-pulse">
+              {parsedNotification}
+            </div>
+          )}
+
+          {/* MAIN CONTENT AREA */}
+          <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            
+            {/* QUICK INPUT BAR (EVERYWHERE ACCESSIBLE) */}
+            <div class="mb-8 bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 p-4 rounded-2xl border border-slate-800 shadow-xl">
+              <form onSubmit={parseSmartText} class="flex flex-col sm:flex-row items-center gap-3">
+                <div class="relative flex-1 w-full">
+                  <i class="fa-solid fa-wand-magic-sparkles absolute left-3.5 top-3.5 text-sky-400 text-sm"></i>
+                  <input
+                    type="text"
+                    value={quickText}
+                    onChange={(e) => setQuickText(e.target.value)}
+                    placeholder="Entrada rápida inteligente: ej: 'Examen de Cálculo el 2026-08-20 peso 30%'"
+                    class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 transition"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  class="w-full sm:w-auto px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white text-sm font-semibold rounded-xl shadow-lg shadow-sky-600/20 transition flex items-center justify-center gap-2"
+                >
+                  <i class="fa-solid fa-bolt"></i> Procesar Nota
+                </button>
+              </form>
+            </div>
+
+            {/* TAB 1: DASHBOARD */}
+            {activeTab === 'dashboard' && (
+              <div class="space-y-6">
+                
+                {/* METRICS ROW */}
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                    <span class="text-xs text-slate-400 font-medium">Prioridad Máxima Actual</span>
+                    <div class="text-2xl font-bold text-red-400 mt-1">
+                      {sortedAssessments[0] ? `${sortedAssessments[0].title.slice(0, 18)}...` : 'Ninguna'}
+                    </div>
+                    <span class="text-[10px] text-slate-500">
+                      {sortedAssessments[0] ? `Score: ${sortedAssessments[0].priorityScore}` : 'Al día'}
+                    </span>
+                  </div>
+
+                  <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                    <span class="text-xs text-slate-400 font-medium">Pendientes Próximos</span>
+                    <div class="text-2xl font-bold text-sky-400 mt-1">
+                      {assessments.filter(a => !a.isCompleted).length}
+                    </div>
+                    <span class="text-[10px] text-slate-500">De un total de {assessments.length}</span>
+                  </div>
+
+                  <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                    <span class="text-xs text-slate-400 font-medium">Bloques de Estudio</span>
+                    <div class="text-2xl font-bold text-indigo-400 mt-1">
+                      {studyBlocks.filter(b => !b.isCompleted).length}
+                    </div>
+                    <span class="text-[10px] text-slate-500">Sesiones recomendadas</span>
+                  </div>
+
+                  <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800 flex flex-col justify-between">
+                    <span class="text-xs text-slate-400 font-medium">Motor de Planificación</span>
+                    <button
+                      onClick={handleGenerateSchedule}
+                      class="mt-2 w-full py-2 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-medium text-xs rounded-xl shadow transition flex items-center justify-center gap-1.5"
+                    >
+                      <i class="fa-solid fa-arrows-rotate"></i> Auto-Generar Horario
+                    </button>
+                  </div>
+                </div>
+
+                {/* TWO COLUMNS: AGENDA VS PRIORITY RANKING */}
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  
+                  {/* AGENDA / BLOQUES */}
+                  <div class="lg:col-span-7 bg-slate-900 p-5 rounded-2xl border border-slate-800">
+                    <div class="flex items-center justify-between mb-4">
+                      <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                        <i class="fa-solid fa-calendar-day text-sky-400"></i>
+                        Bloques de Estudio Sugeridos
+                      </h2>
+                      <span class="text-xs text-slate-400">{studyBlocks.length} sesiones</span>
+                    </div>
+
+                    {studyBlocks.length === 0 ? (
+                      <div class="text-center py-12 border border-dashed border-slate-800 rounded-xl">
+                        <i class="fa-solid fa-calendar-plus text-3xl text-slate-600 mb-2"></i>
+                        <p class="text-sm text-slate-400">No hay bloques generados aún.</p>
+                        <button
+                          onClick={handleGenerateSchedule}
+                          class="mt-3 text-xs text-sky-400 hover:underline font-medium"
+                        >
+                          Haz clic aquí para calcular tu agenda
+                        </button>
+                      </div>
+                    ) : (
+                      <div class="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                        {studyBlocks.map(block => {
+                          const sub = subjects.find(s => s.id === block.subjectId);
+                          return (
+                            <div
+                              key={block.id}
+                              class={`p-3.5 rounded-xl border transition flex items-center justify-between gap-3 ${
+                                block.isCompleted
+                                  ? 'bg-slate-950/40 border-slate-800 opacity-50 line-through'
+                                  : 'bg-slate-950 border-slate-800/80 hover:border-slate-700'
+                              }`}
+                            >
+                              <div class="flex items-center gap-3">
+                                <button
+                                  onClick={() => toggleBlock(block.id)}
+                                  class={`w-5 h-5 rounded-md border flex items-center justify-center transition ${
+                                    block.isCompleted
+                                      ? 'bg-emerald-500 border-emerald-500 text-white'
+                                      : 'border-slate-700 hover:border-sky-400'
+                                  }`}
+                                >
+                                  {block.isCompleted && <i class="fa-solid fa-check text-xs"></i>}
+                                </button>
+                                <div>
+                                  <div class="text-xs font-semibold text-slate-200">{block.title}</div>
+                                  <div class="flex items-center gap-2 mt-1">
+                                    <span
+                                      class="w-2 h-2 rounded-full"
+                                      style={{ backgroundColor: sub?.color || '#3b82f6' }}
+                                    ></span>
+                                    <span class="text-[10px] text-slate-400">{sub?.name}</span>
+                                    <span class="text-[10px] text-slate-500">• {block.date}</span>
+                                  </div>
+                                </div>
+                              </div>
+                              <span class="text-[10px] font-mono px-2 py-1 rounded bg-slate-900 border border-slate-800 text-slate-400">
+                                {block.durationMinutes} min
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ALGORITHM PRIORITY BREAKDOWN */}
+                  <div class="lg:col-span-5 bg-slate-900 p-5 rounded-2xl border border-slate-800">
+                    <div class="flex items-center justify-between mb-4">
+                      <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                        <i class="fa-solid fa-arrow-trend-up text-amber-400"></i>
+                        Ranking de Prioridad (Algoritmo)
+                      </h2>
+                    </div>
+
+                    <div class="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                      {sortedAssessments.map(ass => {
+                        const lvl = getPriorityLevel(ass.priorityScore);
+                        return (
+                          <div key={ass.id} class="p-3 bg-slate-950 rounded-xl border border-slate-800/80 flex items-center justify-between gap-2">
+                            <div class="flex-1 min-w-0">
+                              <div class="flex items-center gap-2">
+                                <span class={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${lvl.color}`}>
+                                  {lvl.label}
+                                </span>
+                                <span class="text-xs font-semibold text-slate-200 truncate">{ass.title}</span>
+                              </div>
+                              <div class="text-[10px] text-slate-400 mt-1">
+                                {ass.subject?.name} • Entrega: {ass.dueDate}
+                              </div>
+                            </div>
+                            <div class="text-right">
+                              <div class="text-sm font-bold font-mono text-slate-100">{ass.priorityScore}</div>
+                              <div class="text-[9px] text-slate-500">Score Urgencia</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                </div>
+
+              </div>
+            )}
+
+            {/* TAB 2: ASSESSMENTS / EXAMS */}
+            {activeTab === 'assessments' && (
+              <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                {/* FORM */}
+                <div class="lg:col-span-5 bg-slate-900 p-5 rounded-2xl border border-slate-800 h-fit">
+                  <h2 class="text-base font-bold text-slate-100 mb-4 flex items-center gap-2">
+                    <i class="fa-solid fa-plus text-sky-400"></i> Registrar Evaluación
+                  </h2>
+                  <form onSubmit={handleAddAssessment} class="space-y-4">
+                    <div>
+                      <label class="block text-xs font-medium text-slate-400 mb-1">Materia</label>
+                      <select
+                        value={newAssessment.subjectId}
+                        onChange={(e) => setNewAssessment({ ...newAssessment, subjectId: e.target.value })}
+                        class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500"
+                      >
+                        {subjects.map(s => (
+                          <option key={s.id} value={s.id}>{s.name} (Dificultad: {s.difficulty})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label class="block text-xs font-medium text-slate-400 mb-1">Título del Examen / Entrega</label>
+                      <input
+                        type="text"
+                        value={newAssessment.title}
+                        onChange={(e) => setNewAssessment({ ...newAssessment, title: e.target.value })}
+                        placeholder="Ej: Proyecto Final de Algoritmos"
+                        class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500"
+                        required
+                      />
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">Fecha de Entrega</label>
+                        <input
+                          type="date"
+                          value={newAssessment.dueDate}
+                          onChange={(e) => setNewAssessment({ ...newAssessment, dueDate: e.target.value })}
+                          class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">Peso en Nota (%)</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={newAssessment.weight}
+                          onChange={(e) => setNewAssessment({ ...newAssessment, weight: parseInt(e.target.value) })}
+                          class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label class="block text-xs font-medium text-slate-400 mb-1">Horas Est. Preparación</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="50"
+                        value={newAssessment.estimatedHours}
+                        onChange={(e) => setNewAssessment({ ...newAssessment, estimatedHours: parseInt(e.target.value) })}
+                        class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      class="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs rounded-xl shadow transition"
+                    >
+                      Añadir Evaluación
+                    </button>
+                  </form>
+                </div>
+
+                {/* LIST */}
+                <div class="lg:col-span-7 bg-slate-900 p-5 rounded-2xl border border-slate-800">
+                  <h2 class="text-base font-bold text-slate-100 mb-4 flex items-center gap-2">
+                    <i class="fa-solid fa-list text-sky-400"></i> Evaluaciones Registradas
+                  </h2>
+                  <div class="space-y-3">
+                    {assessments.map(ass => {
+                      const sub = subjects.find(s => s.id === ass.subjectId);
+                      return (
+                        <div key={ass.id} class="p-4 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between gap-4">
+                          <div class="flex items-center gap-3">
+                            <button
+                              onClick={() => toggleAssessment(ass.id)}
+                              class={`w-5 h-5 rounded-md border flex items-center justify-center transition ${
+                                ass.isCompleted ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-700'
+                              }`}
+                            >
+                              {ass.isCompleted && <i class="fa-solid fa-check text-xs"></i>}
+                            </button>
+                            <div>
+                              <div class={`text-sm font-semibold ${ass.isCompleted ? 'line-through text-slate-500' : 'text-slate-200'}`}>
+                                {ass.title}
+                              </div>
+                              <div class="flex items-center gap-2 mt-1">
+                                <span class="text-xs text-slate-400">{sub?.name || 'Materia'}</span>
+                                <span class="text-xs text-slate-500">• Fecha: {ass.dueDate}</span>
+                                <span class="text-xs text-amber-400 font-mono">• Peso: {ass.weight}%</span>
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setAssessments(prev => prev.filter(a => a.id !== ass.id))}
+                            class="text-slate-600 hover:text-red-400 text-xs transition"
+                          >
+                            <i class="fa-solid fa-trash"></i>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* TAB 3: SUBJECTS */}
+            {activeTab === 'subjects' && (
+              <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                {/* FORM */}
+                <div class="lg:col-span-5 bg-slate-900 p-5 rounded-2xl border border-slate-800 h-fit">
+                  <h2 class="text-base font-bold text-slate-100 mb-4 flex items-center gap-2">
+                    <i class="fa-solid fa-plus text-sky-400"></i> Nueva Materia
+                  </h2>
+                  <form onSubmit={handleAddSubject} class="space-y-4">
+                    <div>
+                      <label class="block text-xs font-medium text-slate-400 mb-1">Nombre de la Asignatura</label>
+                      <input
+                        type="text"
+                        value={newSubject.name}
+                        onChange={(e) => setNewSubject({ ...newSubject, name: e.target.value })}
+                        placeholder="Ej: Programación Orientada a Objetos"
+                        class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500"
+                        required
+                      />
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">Color Distintivo</label>
+                        <input
+                          type="color"
+                          value={newSubject.color}
+                          onChange={(e) => setNewSubject({ ...newSubject, color: e.target.value })}
+                          class="w-full h-9 bg-slate-950 border border-slate-800 rounded-xl px-1 py-1 cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">Dificultad (1-5)</label>
+                        <select
+                          value={newSubject.difficulty}
+                          onChange={(e) => setNewSubject({ ...newSubject, difficulty: parseInt(e.target.value) })}
+                          class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500"
+                        >
+                          <option value="1">1 - Muy Fácil</option>
+                          <option value="2">2 - Fácil</option>
+                          <option value="3">3 - Medio</option>
+                          <option value="4">4 - Difícil</option>
+                          <option value="5">5 - Muy Difícil</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      class="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs rounded-xl shadow transition"
+                    >
+                      Guardar Materia
+                    </button>
+                  </form>
+                </div>
+
+                {/* LIST */}
+                <div class="lg:col-span-7 bg-slate-900 p-5 rounded-2xl border border-slate-800">
+                  <h2 class="text-base font-bold text-slate-100 mb-4 flex items-center gap-2">
+                    <i class="fa-solid fa-book text-sky-400"></i> Mis Asignaturas
+                  </h2>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {subjects.map(sub => (
+                      <div key={sub.id} class="p-4 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                          <span class="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: sub.color }}></span>
+                          <div>
+                            <div class="text-xs font-bold text-slate-200">{sub.name}</div>
+                            <div class="text-[10px] text-slate-500">Dificultad: {sub.difficulty}/5</div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setSubjects(prev => prev.filter(s => s.id !== sub.id))}
+                          class="text-slate-600 hover:text-red-400 text-xs transition"
+                        >
+                          <i class="fa-solid fa-trash"></i>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* TAB 4: GITHUB & PORTFOLIO KIT */}
+            {activeTab === 'github' && (
+              <div class="space-y-6">
+                <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800">
+                  <div class="flex items-center justify-between mb-4">
+                    <div>
+                      <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i class="fa-brands fa-github text-emerald-400"></i> Documentación para GitHub & Portafolio
+                      </h2>
+                      <p class="text-xs text-slate-400 mt-0.5">
+                        Copia el texto a continuación y pégalo en el archivo <code>README.md</code> de tu repositorio.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div class="relative bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 overflow-x-auto">
+                    <pre class="whitespace-pre-wrap">{`# 🧠 Smart Study Scheduler (Planificador de Estudio Inteligente)
+
+Un sistema web PWA/Offline-First para estudiantes que calcula automáticamente la prioridad de estudio utilizando un algoritmo de ponderación matemática según la urgencia, peso del examen y coeficiente de dificultad.
+
+## 🚀 Características Clave
+- **Algoritmo Propietario de Priorización:** Calcula un *Urgency Score* combinando días restantes, porcentaje de evaluación y dificultad.
+- **Entrada Rápida e Inteligente (Smart Text Parser):** Procesa notas informales para registrar tareas en segundos.
+- **Arquitectura Offline-First (PWA):** Funciona sin conexión a Internet guardando el estado en LocalStorage/IndexedDB.
+- **Diseño UI/UX Profesional:** Construido con React, Tailwind CSS e iconos vectoriales.
+
+## 📐 Fórmula del Algoritmo
+\`\`\`math
+Score = (Peso % * Dificultad * 100) / (Días Restantes ^ 1.2)
+\`\`\`
+
+## 🛠️ Tecnologías Utilizadas
+- **TypeScript & React** (Arquitectura basada en componentes)
+- **Tailwind CSS** (Estilos reactivos y tematización oscura)
+- **Service Workers / PWA** (Soporte Offline nativo en dispositivos móviles)
+`}</pre>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </main>
+
+          {/* FOOTER */}
+          <footer class="bg-slate-950 border-t border-slate-800/80 py-4 text-center text-xs text-slate-500">
+            Smart Study Scheduler • Portafolio Full Stack & PWA • React & Tailwind CSS
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
+```eof
